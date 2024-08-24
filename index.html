@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/h3-js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+
+    <script src="https://unpkg.com/geojson-hash"></script>
+    <style>
+      #overlay {
+        background: gray;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 30px;
+        position: absolute;
+        top: 0;
+        z-index: 99;
+      }
+      #left-map {
+        bottom: 0;
+        border-right: 2px solid black;
+        left: 0;
+        right: 50%;
+        position: absolute;
+        top: 0;
+        z-index: 1;
+      }
+      #right-map {
+        bottom: 0;
+        border-left: 2px solid black;
+        left: 50%;
+        right: 0;
+        position: absolute;
+        top: 0;
+        z-index: 1;
+      }
+    </style>
+    <script>
+      app = {
+        func: {
+          
+        },
+        refs: {
+          a: {
+            basemap: null,
+            map: null
+          },
+          b: {
+            basemap: null,
+            map: null
+          }
+        },
+        state: {
+          a: {
+            geojson: null,
+            hashes: null,
+            cells: null
+          },
+          b: {
+            geojson: null,
+            hashes: null,
+            cells: null 
+          }
+        }
+      }
+    </script>
+    <script id="h3e">
+      h3e = {
+        geojson_to_cells: function geojson_to_cells(geojson) {
+          const cells = new Set();
+          turf.geomEach(geojson, geom => {
+            if (geom.type === "Polygon") {
+              h3.polygonToCells(geom.coordinates[0], 7, true).forEach(cell => {
+                cells.add(cell);
+              });
+            } else if (geom.type === "MultiPolygon") {
+              geom.coordinates.forEach(polygon => {
+                h3.polygonToCells(polygon[0], 7, true).forEach(cell => {
+                  cells.add(cell);
+                });
+              });
+            }
+          });
+          return {
+            3: new Set(Array.from(cells).map(cell => h3.cellToParent(cell, 3))),
+            5: new Set(Array.from(cells).map(cell => h3.cellToParent(cell, 5))),
+            7: cells
+          }
+        }
+      }
+    </script>
+    <script id="leaflet-h3">
+      function hexToLayer(hex) {
+        const coordinates = h3.cellToBoundary(hex, true);
+        coordinates.push(coordinates[0]);
+        const geometry = {
+          type: "Polygon",
+          coordinates: [coordinates]
+        };
+        const feature = {
+          type: "Feature",
+          properties: {},
+          geometry
+        };
+        const geojsonLayer = L.geoJson(feature);
+        geojsonLayer.bindPopup(`
+          hex: #${hex}
+        `);
+        return geojsonLayer;
+      }
+      function cellsToLayerGroup(cells) {
+        return L.layerGroup(Array.from(cells).map(cell => hexToLayer(cell)));
+      }
+    </script>
+    <script>
+      function readAsJSON(file) {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.addEventListener("load", () => resolve(JSON.parse(reader.result)));
+          reader.readAsText(file);
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="overlay">
+      <label for="geojson1">Sketch 1 GeoJSON</label>
+      <br/>
+      <input type="file" id="geojson1">
+      <br/>
+      <br/>
+      <br/>
+      <br/>
+      <label for="geojson2">Sketch 2 GeoJSON</label>
+      <br/>
+      <input type="file" id="geojson2">
+      <br/>
+      <br/>
+      <br/>
+      <button id="run">SCORE</button>
+      <div id="results"></div>
+    </div>
+    <div id="left">
+      <div id="left-map"></div>
+    </div>
+    <div id="middle"></div>
+    <div id="right">
+      <div id="right-map"></div>
+    </div>
+    <script>
+      function precompute (geojson) {
+        const cells = h3e.geojson_to_cells(geojson);
+
+        const cellLayers = {
+          3: cellsToLayerGroup(cells['3']),
+          5: cellsToLayerGroup(cells['5']),
+          7: cellsToLayerGroup(cells['7'])                   
+        }
+
+        return {
+          cells,
+          cellLayers,
+          hashes: geojson_hash(geojson),
+          geojson
+        }
+      }
+
+      async function load_map(map, data) {
+        const { geojson, cells, cellLayers, hashes } = await data;
+        const geojsonLayer = L.geoJson(geojson);
+        geojsonLayer.addTo(map);
+        map.fitBounds(geojsonLayer.getBounds());
+
+        const overlayMaps = {
+          "Source": geojsonLayer,
+          "H3 - Level 3": cellLayers['3'].addTo(map),
+          "H3 - Level 5": cellLayers['5'],
+          "H3 - Level 7": cellLayers['7'],                    
+        }
+        L.control.layers({}, overlayMaps).addTo(map);
+      }
+
+      document.getElementById("geojson1").addEventListener("input", function (event) {
+        window.app.state.a = readAsJSON(event.target.files[0]).then(precompute);
+        load_map(app.refs.a.map, app.state.a);
+      });
+
+      document.getElementById("geojson2").addEventListener("input", function (event) {
+        window.app.state.b = readAsJSON(event.target.files[0]).then(precompute);
+        load_map(app.refs.b.map, app.state.b);
+      });
+
+
+      const overlaps = (a, b) => a.intersection(b).size >= 1;
+      const jaccard = (a, b) => a.intersection(b).size / a.union(b).size;
+
+      function is_related(a, b) {
+        return overlaps(geojson_hash(a), geojson_hash(b));
+      }
+
+
+      async function score_similarity(a, b) {
+        a = await a;
+        b = await b;
+
+        if (a.hashes === null || b.hashes === null) return;
+
+        const ahashes = new Set(a.hashes);
+        const bhashes = new Set(b.hashes);
+
+        const acells3 = new Set(a.cells['3']);
+        const bcells3 = new Set(b.cells['3']);
+
+        const acells5 = new Set(a.cells['5']);
+        const bcells5 = new Set(b.cells['5']);
+
+        const acells7 = new Set(a.cells['7']);
+        const bcells7 = new Set(b.cells['7']);        
+
+        const related = overlaps(ahashes, bhashes);
+
+        const genetic_distance = ahashes.symmetricDifference(bhashes).size;
+
+        const results = {
+          related,
+          genetic_distance,
+          jaccard_index_3: jaccard(acells3, bcells3),
+          jaccard_index_5: jaccard(acells5, bcells5),
+          jaccard_index_7: jaccard(acells7, bcells7)                    
+        };
+        console.log(results);
+
+        document.getElementById("results").innerText = JSON.stringify(results, undefined, 2);
+
+        document.getElementById("overlay").style.display = "none";
+      }
+
+      document.getElementById("run").addEventListener("click", function() {
+        score_similarity(window.app.state.a, window.app.state.b);
+      });
+    </script>
+    <script>
+      var leftMap = L.map('left-map').setView([51.505, -0.09], 13);
+      var rightMap = L.map('right-map').setView([51.505, -0.09], 13);
+
+      function create_basemap () {
+        return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        });
+      }
+
+      app.refs.a.basemap = create_basemap().addTo(leftMap);
+      app.refs.b.basemap = create_basemap().addTo(rightMap);
+
+      window.app.refs.a.map = leftMap;
+      window.app.refs.b.map = rightMap;
+
+      // const h3indices = new URLSearchParams(window.location.search).get("h3").split(",");
+
+
+
+
+      // const h3indices = [];
+
+      // h3indices.forEach(function (hex) {
+      //   hexToLayer(hex).addTo(map);
+      // });
+
+      // const coordinates = h3.cellsToMultiPolygon(h3indices, true);
+      // coordinates.push(coordinates[0]);
+
+      // const multiPolygon = {
+      //   type: "Feature",
+      //   properties: {},
+      //   geometry: {
+      //     type: "MultiPolygon",
+      //     coordinates
+      //   }
+      // };
+
+      // const bounds = L.geoJson(multiPolygon).getBounds();
+      // map.fitBounds(bounds);
+
+      // fetch(new URLSearchParams(window.location.search).get("geojson"))
+      // .then(res => res.json())
+      // .then(geojson_data => {
+      //   const lyr = L.geoJson(geojson_data);
+      //   lyr.setStyle({
+      //       weight: 4,
+      //       color: '#3f3',
+      //       fillOpacity: 0
+      //   });
+      //   lyr.addTo(map);
+      //   lyr.bringToBack();
+
+      //   map.fitBounds(lyr.getBounds());
+
+      //   // convert polygon to cells
+      //   turf.geomEach(geojson_data, geom => {
+      //     console.log("geom:", geom);
+      //     if (geom.type === "Polygon") {
+      //       const cells = polygonToCells(geom.coordinates[0], 5);
+      //       console.log("cells:", cells);
+      //       cells.forEach(hex => {
+      //         const lyr = hexToLayer(hex);
+      //         lyr.setStyle({
+      //             weight: 2,
+      //             color: '#000',
+      //             fillOpacity: 0
+      //         });
+      //         lyr.addTo(map);
+      //         lyr.bringToFront();
+      //       });
+      //     }
+      //   });
+      // });
+    </script>
+  </body>
+</html>
