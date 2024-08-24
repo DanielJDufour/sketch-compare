@@ -22,19 +22,32 @@
         bottom: 0;
         border-right: 2px solid black;
         left: 0;
-        right: 50%;
+        right: 60%;
         position: absolute;
         top: 0;
         z-index: 1;
       }
+      #middle {
+        background: black;
+        bottom: 0;
+        left: 40%;
+        position: absolute;
+        right: 40%;
+        top: 0;
+      }
       #right-map {
         bottom: 0;
         border-left: 2px solid black;
-        left: 50%;
+        color: whitesmoke;
+        left: 60%;
         right: 0;
         position: absolute;
         top: 0;
         z-index: 1;
+      }
+      #results {
+        color: white;
+        padding: 10px;
       }
     </style>
     <script>
@@ -140,12 +153,13 @@
       <br/>
       <br/>
       <button id="run">SCORE</button>
-      <div id="results"></div>
     </div>
     <div id="left">
       <div id="left-map"></div>
     </div>
-    <div id="middle"></div>
+    <div id="middle">
+      <div id="results"></div>
+    </div>
     <div id="right">
       <div id="right-map"></div>
     </div>
@@ -169,7 +183,11 @@
 
       async function load_map(map, data) {
         const { geojson, cells, cellLayers, hashes } = await data;
-        const geojsonLayer = L.geoJson(geojson);
+        const geojsonLayer = L.geoJson(geojson, {
+          style: {
+            "color": "#0F0"
+          }
+        });
         geojsonLayer.addTo(map);
         map.fitBounds(geojsonLayer.getBounds());
 
@@ -223,16 +241,16 @@
 
         const genetic_distance = ahashes.symmetricDifference(bhashes).size;
 
-        const results = {
-          related,
-          genetic_distance,
-          jaccard_index_3: jaccard(acells3, bcells3),
-          jaccard_index_5: jaccard(acells5, bcells5),
-          jaccard_index_7: jaccard(acells7, bcells7)                    
-        };
+        const results = [
+          ["related", related],
+          ["genetic distance", genetic_distance],
+          ["jaccard index (level 3)", Number(jaccard(acells3, bcells3).toFixed(4))],
+          ["jaccard index (level 5)", Number(jaccard(acells5, bcells5).toFixed(4))],
+          ["jaccard index (level 7)", Number(jaccard(acells7, bcells7).toFixed(4))]
+        ];
         console.log(results);
 
-        document.getElementById("results").innerText = JSON.stringify(results, undefined, 2);
+        document.getElementById("results").innerText = results.map(([k, v]) => `${k}:\n${v}\n\n\n`).join("\n");
 
         document.getElementById("overlay").style.display = "none";
       }
