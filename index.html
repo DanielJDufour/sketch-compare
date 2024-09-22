@@ -69,14 +69,28 @@
           a: {
             geojson: null,
             hashes: null,
-            cells: null
+            cells: null,
+            cell_weight: null
           },
           b: {
             geojson: null,
             hashes: null,
-            cells: null 
+            cells: null,
+            cell_weight: null
           }
         }
+      }
+    </script>
+    <script>
+      function max (arr) {
+        let result = arr[0];
+        for (let i = 1; i < arr.length; i++) result = Math.max(result, arr[i]);
+        return result;
+      }
+      function min (arr) {
+        let result = arr[0];
+        for (let i = 1; i < arr.length; i++) result = Math.min(result, arr[i]);
+        return result;
       }
     </script>
     <script id="h3e">
@@ -101,11 +115,62 @@
             5: new Set(Array.from(cells).map(cell => h3.cellToParent(cell, 5))),
             7: cells
           }
-        }
-      }
+        },
+        geojson_to_weighted_cells: function geojson_to_cells(geojson, ) {
+          const cells = {};
+          const polygon_sizes = new Set();
+          turf.geomEach(geojson, geom => {
+            if (geom.type === "Polygon") {
+              const area = turf.convertArea(turf.area(geom), "meters", "kilometers");
+              polygon_sizes.add(area);
+              h3.polygonToCells(geom.coordinates[0], 7, true).forEach(cell => {
+                if (!(cell in cells)) cells[cell] = area;
+                else cells[cell] = Math.min(cells[cell], area);
+              });
+            } else if (geom.type === "MultiPolygon") {
+              geom.coordinates.forEach(polygon => {
+                const area = turf.convertArea(turf.area(geom), "meters", "kilometers");
+                polygon_sizes.add(area);
+                h3.polygonToCells(polygon[0], 7, true).forEach(cell => {
+                  if (!(cell in cells)) cells[cell] = area;
+                  else cells[cell] = Math.min(cells[cell], area);
+                });
+              });
+            }
+          });
+
+          const cells_5 = Object.entries(cells).reduce((acc, [id, n]) => {
+            const parent = h3.cellToParent(id, 5)
+            if (parent in acc) acc[parent] = Math.min(acc[parent], n);
+            else acc[parent] = n;
+            return acc;
+          }, {});
+          console.log("cells_5:", cells_5);
+          
+          const cells_3 = Object.entries(cells_5).reduce((acc, [id, n]) => {
+            const parent = h3.cellToParent(id, 3)
+            if (parent in acc) acc[parent] = Math.min(acc[parent], n);
+            else acc[parent] = n;
+            return acc;
+          }, {});
+          console.log("cells_3:", cells_3);
+
+          // used sizes
+          const sizes = Object.values(cells_3).concat(Object.values(cells_5)).concat(Object.values(cells));
+
+          return {
+            3: cells_3,
+            5: cells_5,
+            7: cells,
+            min: min(sizes),
+            max: max(sizes),
+            sizes: new Set(sizes)
+          };
+        }        
+      };
     </script>
     <script id="leaflet-h3">
-      function hexToLayer(hex) {
+      function hexToLayer(hex, weight) {
         const coordinates = h3.cellToBoundary(hex, true);
         coordinates.push(coordinates[0]);
         const geometry = {
@@ -120,11 +185,12 @@
         const geojsonLayer = L.geoJson(feature);
         geojsonLayer.bindPopup(`
           hex: #${hex}
+          min source area: ${weight}
         `);
         return geojsonLayer;
       }
       function cellsToLayerGroup(cells) {
-        return L.layerGroup(Array.from(cells).map(cell => hexToLayer(cell)));
+        return L.layerGroup(Object.entries(cells).map(([cell, weight]) => hexToLayer(cell, weight)));
       }
     </script>
     <script>
@@ -165,7 +231,8 @@
     </div>
     <script>
       function precompute (geojson) {
-        const cells = h3e.geojson_to_cells(geojson);
+        const cells = h3e.geojson_to_weighted_cells(geojson);
+        console.log("cells:", cells);
 
         const cellLayers = {
           3: cellsToLayerGroup(cells['3']),
@@ -177,7 +244,9 @@
           cells,
           cellLayers,
           hashes: geojson_hash(geojson),
-          geojson
+          geojson,
+          min: cells.min,
+          sizes: cells.sizes
         }
       }
 
@@ -214,10 +283,35 @@
       const overlaps = (a, b) => a.intersection(b).size >= 1;
       const jaccard = (a, b) => a.intersection(b).size / a.union(b).size;
 
+      // merge simple key value objects with method to choose when overlap
+      // using same name as Lodash
+      const mergeWith = (a, b, method) => {
+        const d = {};
+        for (let k in a) d[k] = a[k];
+        for (let k in b) {
+          if (k in d) d[k] = method(d[k], b[k]);
+          else d[k] = b[k]
+        }
+        return d;
+      };
+
+      const mapValues = (obj, func) => Object.fromEntries(Object.entries(obj).map(([k, v]) => ([k, func(k, v)])));
+
+      const setOfKeys = obj => new Set(Object.keys(obj));
+
+      // weights is a dictionary mapping id to weight
+      const weighted_jaccard = (a, b, weights) => {
+        const intersection = a.intersection(b);
+        const union = a.union(b);
+        
+        const intersection_total = Array.from(intersection).reduce((total, n) => total + weights[n], 0);
+        const union_total = Array.from(union).reduce((total, n) => total + weights[n], 0);
+        return intersection_total / union_total;
+      };
+
       function is_related(a, b) {
         return overlaps(geojson_hash(a), geojson_hash(b));
       }
-
 
       async function score_similarity(a, b) {
         a = await a;
@@ -225,32 +319,77 @@
 
         if (a.hashes === null || b.hashes === null) return;
 
+        const minscore = Math.min(a.cells.min, b.cells.min);
+        const maxscore = Math.max(a.cells.max, b.cells.max);
+        console.log("range:", [minscore.toLocaleString(), maxscore.toLocaleString()]);
+
         const ahashes = new Set(a.hashes);
         const bhashes = new Set(b.hashes);
 
-        const acells3 = new Set(a.cells['3']);
-        const bcells3 = new Set(b.cells['3']);
+        const acells3 = a.cells['3'];
+        const bcells3 = b.cells['3'];
 
-        const acells5 = new Set(a.cells['5']);
-        const bcells5 = new Set(b.cells['5']);
+        const acells5 = a.cells['5'];
+        const bcells5 = b.cells['5'];
 
-        const acells7 = new Set(a.cells['7']);
-        const bcells7 = new Set(b.cells['7']);        
+        const acells7 = a.cells['7'];
+        const bcells7 = b.cells['7'];        
 
         const related = overlaps(ahashes, bhashes);
 
         const genetic_distance = ahashes.symmetricDifference(bhashes).size;
 
+        // re-weighted should convert source area values to a range from 0 to 1
+        const reweights = {};
+        const denominator = minscore + maxscore;
+        console.log("denominator:", denominator.toLocaleString());
+        const all_sizes = Array.from(a.cells.sizes.union(b.cells.sizes));
+        console.log("all_sizes:", all_sizes);
+        all_sizes.forEach(sz => { 
+          // source size to score
+          reweights[sz] = (denominator - sz) / denominator;
+        });
+        console.log("reweights:", reweights);
+
+        const acells3_weighted = mapValues(acells3, (k, v) => reweights[v]);
+        const bcells3_weighted = mapValues(bcells3, (k, v) => reweights[v]);
+        const acells5_weighted = mapValues(acells5, (k, v) => {
+          if (!(v in reweights)) throw Error(v + "not in reweights");
+          return reweights[v];
+        });
+        const bcells5_weighted = mapValues(bcells5, (k, v) => reweights[v]);
+        const acells7_weighted = mapValues(acells7, (k, v) => reweights[v]);
+        const bcells7_weighted = mapValues(bcells7, (k, v) => reweights[v]);
+
+        console.log({acells3_weighted, bcells3_weighted, acells5_weighted, bcells5_weighted})
+
+        const weights = {
+          3: mergeWith(acells3_weighted, bcells3_weighted, Math.max),
+          5: mergeWith(acells5_weighted, bcells5_weighted, Math.max),
+          7: mergeWith(acells7_weighted, bcells7_weighted, Math.max),
+        };
+        console.log("weights:", weights);
+
+        const aset3 = setOfKeys(acells3);
+        const bset3 = setOfKeys(bcells3);
+        const aset5 = setOfKeys(acells5);
+        const bset5 = setOfKeys(bcells5);
+        const aset7 = setOfKeys(acells7);
+        const bset7 = setOfKeys(bcells7);
+
         const results = [
           ["related", related],
           ["genetic distance", genetic_distance],
-          ["jaccard index (level 3)", Number(jaccard(acells3, bcells3).toFixed(4))],
-          ["jaccard index (level 5)", Number(jaccard(acells5, bcells5).toFixed(4))],
-          ["jaccard index (level 7)", Number(jaccard(acells7, bcells7).toFixed(4))]
+          ["jaccard index (level 3)", Number(jaccard(aset3, bset3).toFixed(4))],
+          ["weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(4))],          
+          ["jaccard index (level 5)", Number(jaccard(aset5, bset5).toFixed(4))],
+          ["weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(4))],          
+          ["jaccard index (level 7)", Number(jaccard(aset7, bset7).toFixed(4))],
+          ["weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(4))],          
         ];
         console.log(results);
 
-        document.getElementById("results").innerText = results.map(([k, v]) => `${k}:\n${v}\n\n\n`).join("\n");
+        document.getElementById("results").innerText = results.map(([k, v]) => `${k}:\n${v}\n\n`).join("\n");
 
         document.getElementById("overlay").style.display = "none";
       }
