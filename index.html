@@ -48,6 +48,7 @@
       #results {
         color: white;
         padding: 10px;
+        font-size: 8pt;
       }
     </style>
     <script>
@@ -160,8 +161,11 @@
 
           return {
             3: cells_3,
+            'simple3': mapValues(cells_3, (k, v) => 1 / v),
             5: cells_5,
+            'simple5': mapValues(cells_5, (k, v) => 1 / v),
             7: cells,
+            'simple7': mapValues(cells, (k, v) => 1 / v),
             min: min(sizes),
             max: max(sizes),
             sizes: new Set(sizes)
@@ -370,6 +374,12 @@
         };
         console.log("weights:", weights);
 
+        const simpleweights = {
+          3: mergeWith(a.cells['simple3'], b.cells['simple3'], Math.max),
+          5: mergeWith(a.cells['simple5'], b.cells['simple5'], Math.max),
+          7: mergeWith(a.cells['simple7'], b.cells['simple7'], Math.max),
+        };
+
         const aset3 = setOfKeys(acells3);
         const bset3 = setOfKeys(bcells3);
         const aset5 = setOfKeys(acells5);
@@ -381,11 +391,14 @@
           ["related", related],
           ["genetic distance", genetic_distance],
           ["jaccard index (level 3)", Number(jaccard(aset3, bset3).toFixed(4))],
-          ["weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(4))],          
+          ["simple weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, simpleweights['3']).toFixed(4))],
+          ["relative weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(4))],          
           ["jaccard index (level 5)", Number(jaccard(aset5, bset5).toFixed(4))],
-          ["weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(4))],          
+          ["simple weighted jaccard index (level 5)", Number(weighted_jaccard(aset5, bset5, simpleweights['5']).toFixed(4))],
+          ["relative weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(4))],          
           ["jaccard index (level 7)", Number(jaccard(aset7, bset7).toFixed(4))],
-          ["weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(4))],          
+          ["simple weighted jaccard index (level 7)", Number(weighted_jaccard(aset7, bset7, simpleweights['7']).toFixed(4))],
+          ["relative weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(4))],          
         ];
         console.log(results);
 
