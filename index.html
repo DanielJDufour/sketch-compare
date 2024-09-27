@@ -427,66 +427,6 @@
 
       window.app.refs.a.map = leftMap;
       window.app.refs.b.map = rightMap;
-
-      // const h3indices = new URLSearchParams(window.location.search).get("h3").split(",");
-
-
-
-
-      // const h3indices = [];
-
-      // h3indices.forEach(function (hex) {
-      //   hexToLayer(hex).addTo(map);
-      // });
-
-      // const coordinates = h3.cellsToMultiPolygon(h3indices, true);
-      // coordinates.push(coordinates[0]);
-
-      // const multiPolygon = {
-      //   type: "Feature",
-      //   properties: {},
-      //   geometry: {
-      //     type: "MultiPolygon",
-      //     coordinates
-      //   }
-      // };
-
-      // const bounds = L.geoJson(multiPolygon).getBounds();
-      // map.fitBounds(bounds);
-
-      // fetch(new URLSearchParams(window.location.search).get("geojson"))
-      // .then(res => res.json())
-      // .then(geojson_data => {
-      //   const lyr = L.geoJson(geojson_data);
-      //   lyr.setStyle({
-      //       weight: 4,
-      //       color: '#3f3',
-      //       fillOpacity: 0
-      //   });
-      //   lyr.addTo(map);
-      //   lyr.bringToBack();
-
-      //   map.fitBounds(lyr.getBounds());
-
-      //   // convert polygon to cells
-      //   turf.geomEach(geojson_data, geom => {
-      //     console.log("geom:", geom);
-      //     if (geom.type === "Polygon") {
-      //       const cells = polygonToCells(geom.coordinates[0], 5);
-      //       console.log("cells:", cells);
-      //       cells.forEach(hex => {
-      //         const lyr = hexToLayer(hex);
-      //         lyr.setStyle({
-      //             weight: 2,
-      //             color: '#000',
-      //             fillOpacity: 0
-      //         });
-      //         lyr.addTo(map);
-      //         lyr.bringToFront();
-      //       });
-      //     }
-      //   });
-      // });
     </script>
   </body>
 </html>
