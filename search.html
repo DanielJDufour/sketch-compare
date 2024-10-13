@@ -9,11 +9,20 @@
 
     <script src="https://unpkg.com/geojson-hash"></script>
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script>
+      function display_number(n) {
+        if (n === "") return n;
+        if (n === 0) return "0";
+        if (typeof n === "number") n = n.toFixed(2);
+        return n.replace(/^0\./, ".").replace(/\.00$/, "")
+      }
+    </script>
     <style>
       #left {
         background: lightcyan;
         bottom: 0;
         left: 0;
+        overflow-y: scroll;
         padding: 50px;
         position: absolute;
         right: 50%;
@@ -71,6 +80,7 @@
           render_selected: function () {
             if (app.state.selected && app.state.selected.name) {
               document.getElementById("selected").innerText = "Comparing with: " + app.state.selected.name;
+              if (app.state.score_duration) document.getElementById("selected").innerText += `\nscoring took: ${app.state.score_duration} ms`;
             } else {
               document.getElementById("selected").innerText = "SELECT A GEOMETRY BELOW";
             }
@@ -81,7 +91,10 @@
               <td class="trash"><button>${app.assets.svg.trash}</button></td>
               <td>${file.name}</td>
               <td class="view" onclick="toggle_layer(${file.id})"><button style="${app.state.displaying.includes(file.id) ? `background-color: ${file.color}` : ""}">${app.assets.svg.nodes}</button></td>
-              <td id="similarity-score">${file.scores.simple_weighted_jaccard_level_7}</td>
+              <td>${file.scores.related ? (file.scores.edit === 0 ? "=" : file.scores.edit) : "∅"}</td>
+              <td id="similarity-score-3">${display_number(file.scores.simple_weighted_jaccard_level_3)}</td>
+              <td id="similarity-score-5">${display_number(file.scores.simple_weighted_jaccard_level_5)}</td>
+              <td id="similarity-score-7">${display_number(file.scores.simple_weighted_jaccard_level_7)}</td>
             </tr>`).join("");
           },
           render: function () {
@@ -92,7 +105,9 @@
             // quickly clear old scores
             app.state.files.forEach(file => {
               file.scores = {
-                simple_weighted_jaccard_level_7: "recalculating..."
+                simple_weighted_jaccard_level_3: "calculating...",
+                simple_weighted_jaccard_level_5: "calculating...",
+                simple_weighted_jaccard_level_7: "calculating..."
               };
             });
 
@@ -101,12 +116,20 @@
             console.log("selected:", app.state.selected);
 
             // calculate similarity score of all the other geometries
+            const start = performance.now();
             app.state.files.forEach(file => {
               file.scores = score_similarity(app.state.selected, file);
             });
+            const end = performance.now();
+            app.state.score_duration = Math.round(end - start);
 
             // sort file
-            app.state.files.sort((a, b) => b.scores.simple_weighted_jaccard_level_7 - a.scores.simple_weighted_jaccard_level_7);
+            app.state.files.sort((a, b) => {
+              let diff = b.scores.simple_weighted_jaccard_level_7 - a.scores.simple_weighted_jaccard_level_7;
+              if (diff === 0) diff = b.scores.simple_weighted_jaccard_level_5 - a.scores.simple_weighted_jaccard_level_5;
+              if (diff === 0) diff = b.scores.simple_weighted_jaccard_level_3 - a.scores.simple_weighted_jaccard_level_3;
+              return diff;
+            });
 
             app.funcs.render();
           }
@@ -248,6 +271,7 @@
   </head>
   <body>
     <div id="left">
+      <div id="precomputation-duration"></div>
       <input type="file" id="geojson-files" multiple>
       <div id="selected"></div>
       <table id="table">
@@ -255,8 +279,11 @@
           <th id="col-select"></th>
           <th id="col-trash"></th>
           <th id="col-filename"></th>
-          <th id="col-view"></th>
-          <th id="col-genetic"></th>
+          <th id="col-view">view</th>
+          <th id="col-genetic">genetic</th>
+          <th id="jaccard3">z3</th>
+          <th id="jaccard5">z5</th>
+          <th id="jaccard7">z7</th>
         </thead>
         <tbody></tbody>
       </table>
@@ -341,6 +368,8 @@
                   geojson: data,
                   color: getRandomColor(),
                   scores: {
+                    simple_weighted_jaccard_level_3: "",
+                    simple_weighted_jaccard_level_5: "",
                     simple_weighted_jaccard_level_7: ""
                   }
                 })
@@ -359,6 +388,8 @@
                 geojson: data,
                 color: getRandomColor(),
                 scores: {
+                  simple_weighted_jaccard_level_3: "",
+                  simple_weighted_jaccard_level_5: "",
                   simple_weighted_jaccard_level_7: ""
                 }
               });
@@ -369,6 +400,7 @@
         app.funcs.render();
 
         // precompute for each file
+        const start = performance.now();
         app.state.files.forEach(file => {
           const precomputed = precompute(file.geojson);
           console.log("precomputed", precomputed);
@@ -377,6 +409,8 @@
           // set color for geojsonlayer
           file.geojsonLayer.setStyle({ color: file.color });
         });
+        const end = performance.now();
+        document.getElementById("precomputation-duration").textContent = "precomputation took " + Math.round(end - start) + "ms";
       });
 
       const overlaps = (a, b) => a.intersection(b).size >= 1;
@@ -483,14 +517,14 @@
           ["related", related],
           ["edit", genetic_distance], // genetic distance, like levenshtein distance
           ["jaccard index (level 3)", Number(jaccard(aset3, bset3).toFixed(4))],
-          ["simple weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, simpleweights['3']).toFixed(4))],
-          ["relative weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(4))],          
-          ["jaccard index (level 5)", Number(jaccard(aset5, bset5).toFixed(4))],
-          ["simple weighted jaccard index (level 5)", Number(weighted_jaccard(aset5, bset5, simpleweights['5']).toFixed(4))],
-          ["relative weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(4))],          
-          ["jaccard index (level 7)", Number(jaccard(aset7, bset7).toFixed(4))],
-          ["simple_weighted_jaccard_level_7", Number(weighted_jaccard(aset7, bset7, simpleweights['7']).toFixed(4))],
-          ["relative weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(4))],          
+          ["simple_weighted_jaccard_level_3",  Number(weighted_jaccard(aset3, bset3, simpleweights['3']).toFixed(2))],
+          ["relative weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(2))],          
+          ["jaccard index (level 5)", Number(jaccard(aset5, bset5).toFixed(2))],
+          ["simple_weighted_jaccard_level_5", Number(weighted_jaccard(aset5, bset5, simpleweights['5']).toFixed(2))],
+          ["relative weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(2))],          
+          ["jaccard index (level 7)", Number(jaccard(aset7, bset7).toFixed(2))],
+          ["simple_weighted_jaccard_level_7", Number(weighted_jaccard(aset7, bset7, simpleweights['7']).toFixed(2))],
+          ["relative weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(2))],          
         ];
 
         return Object.fromEntries(results);
