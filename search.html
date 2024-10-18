@@ -90,11 +90,11 @@
               <td><button id="choose" onclick="app.funcs.select_geometry('${file.id}')">SELECT</button></td>
               <td class="trash"><button>${app.assets.svg.trash}</button></td>
               <td>${file.name}</td>
-              <td class="view" onclick="toggle_layer(${file.id})"><button style="${app.state.displaying.includes(file.id) ? `background-color: ${file.color}` : ""}">${app.assets.svg.nodes}</button></td>
+              <td class="view" onclick="toggle_layer(${file.id})"><button style="${app.state.displaying.geojson.includes(file.id) ? `background-color: ${file.color}` : ""}">${app.assets.svg.nodes}</button></td>
               <td>${file.scores.related ? (file.scores.edit === 0 ? "=" : file.scores.edit) : "∅"}</td>
-              <td id="similarity-score-3">${display_number(file.scores.simple_weighted_jaccard_level_3)}</td>
-              <td id="similarity-score-5">${display_number(file.scores.simple_weighted_jaccard_level_5)}</td>
-              <td id="similarity-score-7">${display_number(file.scores.simple_weighted_jaccard_level_7)}</td>
+              <td id="similarity-score-3" onclick="toggle_hexagons('${file.id}', 3)"><button style="${app.state.displaying.hexagons["3"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.simple_weighted_jaccard_level_3)}</button></td>
+              <td id="similarity-score-5" onclick="toggle_hexagons('${file.id}', 5)"><button style="${app.state.displaying.hexagons["5"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.simple_weighted_jaccard_level_5)}</button></td>
+              <td id="similarity-score-7" onclick="toggle_hexagons('${file.id}', 7)"><button style="${app.state.displaying.hexagons["7"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.simple_weighted_jaccard_level_7)}</button></td>
             </tr>`).join("");
           },
           render: function () {
@@ -140,7 +140,14 @@
         state: {
           selected: null,
           files: [],
-          displaying: []
+          displaying: {
+            geojson: [],
+            hexagons: {
+              "3": [],
+              "5": [],
+              "7": []
+            }
+          }
         }
       }
     </script>
@@ -256,7 +263,7 @@
         return geojsonLayer;
       }
       function cellsToLayerGroup(cells) {
-        return L.layerGroup(Object.entries(cells).map(([cell, weight]) => hexToLayer(cell, weight)));
+        return L.featureGroup(Object.entries(cells).map(([cell, weight]) => hexToLayer(cell, weight)));
       }
     </script>
     <script>
@@ -408,9 +415,16 @@
 
           // set color for geojsonlayer
           file.geojsonLayer.setStyle({ color: file.color });
+          file.cellLayers[3].setStyle({ color: file.color });
+          file.cellLayers[5].setStyle({ color: file.color });
+          file.cellLayers[7].setStyle({ color: file.color });
         });
         const end = performance.now();
         document.getElementById("precomputation-duration").textContent = "precomputation took " + Math.round(end - start) + "ms";
+
+        // select first layer
+        app.funcs.select_geometry(app.state.files[0].id);
+        toggle_layer(app.state.files[0].id);
       });
 
       const overlaps = (a, b) => a.intersection(b).size >= 1;
@@ -565,14 +579,30 @@
 
       app.refs.featureGroup = L.featureGroup([]).addTo(map);
 
+      function toggle_hexagons(id, level) {
+        const file = app.state.files.find(file => file.id == id);
+        if (app.state.displaying.hexagons[level].includes(file.id)) {
+          app.refs.featureGroup.removeLayer(file.cellLayers[level]);
+          app.state.displaying.hexagons[level] = app.state.displaying.hexagons[level].filter(id => id !== file.id);
+        } else {
+          app.refs.featureGroup.addLayer(file.cellLayers[level]);
+          app.state.displaying.hexagons[level].push(file.id)
+        }
+        const bounds = app.refs.featureGroup.getBounds();
+        if (Object.keys(bounds).length >= 1) {
+          map.fitBounds(bounds);
+        }        
+        app.funcs.render_tbody();
+      }
+
       function toggle_layer(id) {
-        const file = app.state.files.find(file => file.id === id);
-        if (app.state.displaying.includes(file.id)) {
+        const file = app.state.files.find(file => file.id == id);
+        if (app.state.displaying.geojson.includes(file.id)) {
           app.refs.featureGroup.removeLayer(file.geojsonLayer);
-          app.state.displaying = app.state.displaying.filter(id => id !== file.id);
+          app.state.displaying.geojson = app.state.displaying.geojson.filter(id => id !== file.id);
         } else {
           app.refs.featureGroup.addLayer(file.geojsonLayer);
-          app.state.displaying.push(file.id)
+          app.state.displaying.geojson.push(file.id)
         }
         const bounds = app.refs.featureGroup.getBounds();
         if (Object.keys(bounds).length >= 1) {
