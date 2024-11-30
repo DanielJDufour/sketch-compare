@@ -1,0 +1,726 @@
+<!-- include performance tests speeds -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/h3-js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+
+    <script src="https://unpkg.com/geojson-hash"></script>
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script>
+      function sum(arr) {
+        return arr.reduce((acc, it) => acc + it, 0);
+      }
+    </script>
+    <script>
+      function polyEach(geom, callback) {
+        let nr = 0;
+        turf.geomEach(geom, primitive => {
+          nr++;
+          if (primitive.type === "Polygon") {
+            callback(primitive, nr++);
+          } else if (primitive.type === "MultiPolygon") {
+            primitive.coordinates.forEach(polygon => {
+              callback({
+                "type": "Polygon",
+                "coordinates": polygon.coordinates
+              }, nr++);
+            });
+          }
+        });
+      } 
+    </script>
+    <script>
+      function display_number(n) {
+        if (n === "") return n;
+        if (n === 0) return "0";
+        if (typeof n === "number") n = n.toFixed(2);
+        return n.replace(/^0\./, ".").replace(/\.00$/, "")
+      }
+    </script>
+    <style>
+      #left {
+        background: lightcyan;
+        bottom: 0;
+        left: 0;
+        overflow-y: scroll;
+        padding: 50px;
+        position: absolute;
+        right: 50%;
+        top: 0;
+      }
+
+      #right {
+        background: lightcoral;
+        bottom: 0;
+        left: 50%;
+        position: absolute;
+        right: 0;
+        top: 0;
+      }
+      #map {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        position: absolute;
+        top: 0;
+        z-index: 1;
+      }
+      #results {
+        color: white;
+        padding: 10px;
+        font-size: 8pt;
+      }
+
+      #selected {
+        border-bottom: 2px dashed chartreuse;
+        margin-top: 75px;
+        max-width: 400px;
+      }
+
+      .trash, .view{
+        position: relative;
+        width: 25px;
+      }
+      .trash button:hover, .view button:hover {
+        cursor: pointer;
+      }
+      .trash svg, .view svg {
+        width: 100%;
+      }
+    </style>
+    <script>
+      app = {
+        assets: {
+          svg: {
+            nodes: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--!Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2024 Fonticons, Inc.--><path d="M418.4 157.9c35.3-8.3 61.6-40 61.6-77.9c0-44.2-35.8-80-80-80c-43.4 0-78.7 34.5-80 77.5L136.2 151.1C121.7 136.8 101.9 128 80 128c-44.2 0-80 35.8-80 80s35.8 80 80 80c12.2 0 23.8-2.7 34.1-7.6L259.7 407.8c-2.4 7.6-3.7 15.8-3.7 24.2c0 44.2 35.8 80 80 80s80-35.8 80-80c0-27.7-14-52.1-35.4-66.4l37.8-207.7zM156.3 232.2c2.2-6.9 3.5-14.2 3.7-21.7l183.8-73.5c3.6 3.5 7.4 6.7 11.6 9.5L317.6 354.1c-5.5 1.3-10.8 3.1-15.8 5.5L156.3 232.2z"/></svg>',
+            trash: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--!Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2024 Fonticons, Inc.--><path d="M135.2 17.7C140.6 6.8 151.7 0 163.8 0L284.2 0c12.1 0 23.2 6.8 28.6 17.7L320 32l96 0c17.7 0 32 14.3 32 32s-14.3 32-32 32L32 96C14.3 96 0 81.7 0 64S14.3 32 32 32l96 0 7.2-14.3zM32 128l384 0 0 320c0 35.3-28.7 64-64 64L96 512c-35.3 0-64-28.7-64-64l0-320zm96 64c-8.8 0-16 7.2-16 16l0 224c0 8.8 7.2 16 16 16s16-7.2 16-16l0-224c0-8.8-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16l0 224c0 8.8 7.2 16 16 16s16-7.2 16-16l0-224c0-8.8-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16l0 224c0 8.8 7.2 16 16 16s16-7.2 16-16l0-224c0-8.8-7.2-16-16-16z"/></svg>'
+          }
+        },
+        funcs: {
+          render_selected: function () {
+            if (app.state.selected && app.state.selected.name) {
+              document.getElementById("selected").innerText = "Comparing with: " + app.state.selected.name;
+              if (app.state.score_duration) document.getElementById("selected").innerText += `\nscoring took: ${app.state.score_duration} ms`;
+            } else {
+              document.getElementById("selected").innerText = "SELECT A GEOMETRY BELOW";
+            }
+          },
+          render_tbody: function () {
+            document.querySelector("tbody").innerHTML = app.state.files.map(file => `<tr>
+              <td><button id="choose" onclick="app.funcs.select_geometry('${file.id}')">SELECT</button></td>
+              <td class="trash"><button>${app.assets.svg.trash}</button></td>
+              <td>${file.name}</td>
+              <td class="view" onclick="toggle_layer(${file.id})"><button style="${app.state.displaying.geojson.includes(file.id) ? `background-color: ${file.color}` : ""}">${app.assets.svg.nodes}</button></td>
+              <td>${file.scores.related ? (file.scores.edit === 0 ? "=" : file.scores.edit) : "∅"}</td>
+              <td id="similarity-score-3" onclick="toggle_hexagons('${file.id}', 3)"><button style="${app.state.displaying.hexagons["3"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp3)}</button></td>
+              <td id="similarity-score-5" onclick="toggle_hexagons('${file.id}', 5)"><button style="${app.state.displaying.hexagons["5"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp5)}</button></td>
+              <td id="similarity-score-7" onclick="toggle_hexagons('${file.id}', 7)"><button style="${app.state.displaying.hexagons["7"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp7)}</button></td>
+            </tr>`).join("");
+          },
+          render: function () {
+            app.funcs.render_selected();
+            app.funcs.render_tbody();
+          },
+          select_geometry: function (id) {
+            // quickly clear old scores
+            app.state.files.forEach(file => {
+              file.scores = {
+                simple_weighted_jaccard_level_3: "calculating...",
+                simple_weighted_jaccard_level_5: "calculating...",
+                simple_weighted_jaccard_level_7: "calculating..."
+              };
+            });
+
+            // find selected geometry
+            app.state.selected = app.state.files.find(file => file.id.toString() === id.toString());
+            console.log("selected:", app.state.selected);
+
+            // calculate similarity score of all the other geometries
+            const start = performance.now();
+            app.state.files.forEach(file => {
+              file.scores = score_similarity(app.state.selected, file);
+            });
+            const end = performance.now();
+            app.state.score_duration = Math.round(end - start);
+
+            // sort file
+            app.state.files.sort((a, b) => {
+              let diff = b.scores.jwp7 - a.scores.jwp7;
+              if (diff === 0) diff = b.scores.jwp5 - a.scores.jwp5;
+              if (diff === 0) diff = b.scores.jwp3 - a.scores.jwp3;
+              return diff;
+            });
+
+            app.funcs.render();
+          }
+        },
+        refs: {
+          map: null
+        },
+        state: {
+          selected: null,
+          files: [],
+          displaying: {
+            geojson: [],
+            hexagons: {
+              "3": [],
+              "5": [],
+              "7": []
+            }
+          },
+          cells: null
+        }
+      }
+    </script>
+    <script>
+      function max (arr) {
+        let result = arr[0];
+        for (let i = 1; i < arr.length; i++) result = Math.max(result, arr[i]);
+        return result;
+      }
+      function min (arr) {
+        let result = arr[0];
+        for (let i = 1; i < arr.length; i++) result = Math.min(result, arr[i]);
+        return result;
+      }
+    </script>
+    <script id="h3e">
+      h3e = {
+        geojson_to_cells: function geojson_to_cells(geojson) {
+          const cells = new Set();
+          turf.geomEach(geojson, geom => {
+            if (geom.type === "Polygon") {
+              h3.polygonToCells(geom.coordinates[0], 7, true).forEach(cell => {
+                cells.add(cell);
+              });
+            } else if (geom.type === "MultiPolygon") {
+              geom.coordinates.forEach(polygon => {
+                h3.polygonToCells(polygon[0], 7, true).forEach(cell => {
+                  cells.add(cell);
+                });
+              });
+            }
+          });
+          return {
+            3: new Set(Array.from(cells).map(cell => h3.cellToParent(cell, 3))),
+            5: new Set(Array.from(cells).map(cell => h3.cellToParent(cell, 5))),
+            7: cells
+          }
+        },
+        geojson_to_weighted_cells: function geojson_to_cells(geojson, ) {
+          const cells = {};
+          const polygon_sizes = new Set();
+          turf.geomEach(geojson, geom => {
+            if (geom.type === "Polygon") {
+              const area = turf.convertArea(turf.area(geom), "meters", "kilometers");
+              polygon_sizes.add(area);
+              h3.polygonToCells(geom.coordinates[0], 7, true).forEach(cell => {
+                if (!(cell in cells)) cells[cell] = area;
+                else cells[cell] = Math.min(cells[cell], area);
+              });
+            } else if (geom.type === "MultiPolygon") {
+              geom.coordinates.forEach(polygon => {
+                const area = turf.convertArea(turf.area(geom), "meters", "kilometers");
+                polygon_sizes.add(area);
+                h3.polygonToCells(polygon[0], 7, true).forEach(cell => {
+                  if (!(cell in cells)) cells[cell] = area;
+                  else cells[cell] = Math.min(cells[cell], area);
+                });
+              });
+            }
+          });
+
+          const cells_5 = Object.entries(cells).reduce((acc, [id, n]) => {
+            const parent = h3.cellToParent(id, 5)
+            if (parent in acc) acc[parent] = Math.min(acc[parent], n);
+            else acc[parent] = n;
+            return acc;
+          }, {});
+          console.log("cells_5:", cells_5);
+          
+          const cells_3 = Object.entries(cells_5).reduce((acc, [id, n]) => {
+            const parent = h3.cellToParent(id, 3)
+            if (parent in acc) acc[parent] = Math.min(acc[parent], n);
+            else acc[parent] = n;
+            return acc;
+          }, {});
+          console.log("cells_3:", cells_3);
+
+          // used sizes
+          const sizes = Object.values(cells_3).concat(Object.values(cells_5)).concat(Object.values(cells));
+
+          return {
+            3: cells_3,
+            'simple3': mapValues(cells_3, (k, v) => 1 / v),
+            5: cells_5,
+            'simple5': mapValues(cells_5, (k, v) => 1 / v),
+            7: cells,
+            'simple7': mapValues(cells, (k, v) => 1 / v),
+            min: min(sizes),
+            max: max(sizes),
+            sizes: new Set(sizes)
+          };
+        }        
+      };
+    </script>
+    <script id="leaflet-h3">
+      function hexToLayer(hex, weight) {
+        const coordinates = h3.cellToBoundary(hex, true);
+        coordinates.push(coordinates[0]);
+        const geometry = {
+          type: "Polygon",
+          coordinates: [coordinates]
+        };
+        const feature = {
+          type: "Feature",
+          properties: {},
+          geometry
+        };
+        const geojsonLayer = L.geoJson(feature);
+        geojsonLayer.bindPopup(`
+          hex: #${hex}
+          min source area: ${weight}
+        `);
+        return geojsonLayer;
+      }
+      function cellsToLayerGroup(cells) {
+        return L.featureGroup(Object.entries(cells).map(([cell, weight]) => hexToLayer(cell, weight)));
+      }
+    </script>
+    <script>
+      function readAsJSON(file) {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.addEventListener("load", () => resolve(JSON.parse(reader.result)));
+          reader.readAsText(file);
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="left">
+      <div id="precomputation-duration"></div>
+      <input type="file" id="geojson-files" multiple>
+      <div id="selected"></div>
+      <table id="table">
+        <thead>
+          <th id="col-select"></th>
+          <th id="col-trash"></th>
+          <th id="col-filename"></th>
+          <th id="col-view">view</th>
+          <th id="col-genetic">genetic</th>
+          <th id="jaccard3">z3</th>
+          <th id="jaccard5">z5</th>
+          <th id="jaccard7">z7</th>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="right">
+      <div id="map"></div>
+    </div>
+    <script>
+      function precompute (geojson) {
+        const cwt = { 7: {}, 5: {}, 3: {}, 0: {} };
+
+        // get array of all cels
+        polyEach(geojson, (poly, ipoly) => {
+          // compute cell weight
+          const cell_weight = Math.round(1e12 / turf.area(poly));
+          // const cell_weight = 1 / turf.area(poly);
+          // console.log("cell_weight", cell_weight);
+
+          // get cells for polygon outer ring
+          const cells7 = h3.polygonToCells(poly.coordinates[0], 7, true);
+          const cells5 = Array.from(new Set(cells7.map(cell => h3.cellToParent(cell, 5))));
+          const cells3 = Array.from(new Set(cells5.map(cell => h3.cellToParent(cell, 3))));
+          const cells0 = Array.from(new Set(cells3.map(cell => h3.cellToParent(cell, 0))));
+
+          // set cell value to current max weight
+          cells7.forEach(c => {
+            if (cwt['7'][c] === undefined || cell_weight > cwt['7'][c]) {
+              cwt['7'][c] = cell_weight;
+            }
+          });
+          cells5.forEach(c => {
+            if (cwt['5'][c] === undefined || cell_weight > cwt['5'][c]) {
+              cwt['5'][c] = cell_weight;
+            }
+          });
+          cells3.forEach(c => {
+            if (cwt['3'][c] === undefined || cell_weight > cwt['3'][c]) {
+              cwt['3'][c] = cell_weight;
+            }
+          });
+          cells0.forEach(c => {
+            if (cwt['0'][c] === undefined || cell_weight > cwt['0'][c]) {
+              cwt['0'][c] = cell_weight;
+            }
+          });          
+        });
+        // console.log("cwt:", cwt);
+
+        // compute total sketch weight for each resolution
+        const total_sketch_weights = {
+          "0": sum(Object.values(cwt['0'])),
+          "3": sum(Object.values(cwt['3'])),
+          "5": sum(Object.values(cwt['5'])),
+          "7": sum(Object.values(cwt['7'])),                              
+        };
+        // console.log("total_sketch_weights:", total_sketch_weights);
+
+        const flatdata = [];
+        ['7', '5', '3', '0'].forEach(res => {
+          Object.entries(cwt[res]).forEach(([cell_id, cell_weight]) => {
+            flatdata.push({
+              cell_id,
+              res: Number(res),
+              cell_weight,
+              cell_weight_as_percentage: cell_weight / total_sketch_weights[res]
+            })
+          });
+        });
+
+        // console.log("flatdata:", flatdata);
+
+        const cells = h3e.geojson_to_weighted_cells(geojson);
+        // console.log("cells:", cells);
+
+        const cellLayers = {
+          3: cellsToLayerGroup(cells['3']),
+          5: cellsToLayerGroup(cells['5']),
+          7: cellsToLayerGroup(cells['7'])                   
+        }
+
+        return {
+          cells,
+          cellLayers,
+          hashes: geojson_hash(geojson),
+          geojson,
+          geojsonLayer: L.geoJson(geojson, { style: {
+            "color": "#0F0",
+            opacity: 0.75,
+            weight: 5
+          } }),
+          min: cells.min,
+          sizes: cells.sizes,
+          flatdata
+        }
+      }
+
+      async function load_map(map, data) {
+        console.log("loading map:");
+        const { geojson, cells, cellLayers, hashes } = await data;
+        const geojsonLayer = L.geoJson(geojson, {
+          style: {
+            "color": "#0F0"
+          }
+        });
+        geojsonLayer.addTo(map);
+        map.fitBounds(geojsonLayer.getBounds());
+
+        const overlayMaps = {
+          "Source": geojsonLayer,
+          "H3 - Level 3": cellLayers['3'].addTo(map),
+          "H3 - Level 5": cellLayers['5'],
+          "H3 - Level 7": cellLayers['7'],                    
+        }
+        L.control.layers({}, overlayMaps).addTo(map);
+      }
+
+      let n = 0;
+      function getRandomColor() {
+        const hue = (n++) * 137.508; // use golden angle approximation
+        return `hsl(${hue},50%,75%)`;
+      }
+
+      document.getElementById("geojson-files").addEventListener("input", async function (event) {
+        const files = Array.from(event.target.files);
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log("file:", file);
+          if (file.name.toLowerCase().endsWith("zip")) {
+            console.log("file.name", file.name);
+            const ab = await file.arrayBuffer();
+            console.log("ab::,", ab);
+            const zipObj = await JSZip.loadAsync(ab);
+            console.log("zipObj:", zipObj);
+            const subfiles = Object.values(zipObj.files);
+            for (let ii = 0; ii < subfiles.length; ii++) {
+              const subfile = subfiles[ii];
+              const subfilename = subfile.name.toLowerCase().split("/").slice(-1)[0];
+              if (subfilename.endsWith("json") && subfilename[0] !== ".") {
+                const text = await subfile.async("text");
+                const data = JSON.parse(text);
+                console.log("data:", data);
+                app.state.files.push({
+                  id: Math.random(),
+                  name: subfilename,
+                  geojson: data,
+                  color: getRandomColor(),
+                  scores: {
+                    jwp3: "",
+                    jwp5: "",
+                    jwp7: ""
+                  }
+                })
+              }
+            }
+          } else {
+            const filename = file.name.toLowerCase().split("/").slice(-1)[0];
+            if (filename.endsWith("json") && filename[0] !== ".") {
+              const text = await file.text();
+              const data = JSON.parse(text);
+              console.log("data:", data);
+
+              app.state.files.push({
+                id: Math.random(),
+                name: filename,
+                geojson: data,
+                color: getRandomColor(),
+                scores: {
+                  jwp3: "",
+                  jwp5: "",
+                  jwp7: ""
+                }
+              });
+            }
+          }
+        }
+
+        app.funcs.render();
+
+        // precompute for each file
+        const start = performance.now();
+        app.state.files.forEach(file => {
+          const precomputed = precompute(file.geojson);
+          console.log("precomputed", precomputed);
+          Object.assign(file, precomputed);
+
+          // set color for geojsonlayer
+          file.geojsonLayer.setStyle({ color: file.color });
+          file.cellLayers[3].setStyle({ color: file.color });
+          file.cellLayers[5].setStyle({ color: file.color });
+          file.cellLayers[7].setStyle({ color: file.color });
+        });
+        const end = performance.now();
+        document.getElementById("precomputation-duration").textContent = "precomputation took " + Math.round(end - start) + "ms";
+
+        // select first layer
+        app.funcs.select_geometry(app.state.files[0].id);
+        toggle_layer(app.state.files[0].id);
+      });
+
+      const overlaps = (a, b) => a.intersection(b).size >= 1;
+      const jaccard = (a, b) => a.intersection(b).size / a.union(b).size;
+
+      // merge simple key value objects with method to choose when overlap
+      // using same name as Lodash
+      const mergeWith = (a, b, method) => {
+        const d = {};
+        for (let k in a) d[k] = a[k];
+        for (let k in b) {
+          if (k in d) d[k] = method(d[k], b[k]);
+          else d[k] = b[k]
+        }
+        return d;
+      };
+
+      const mapValues = (obj, func) => Object.fromEntries(Object.entries(obj).map(([k, v]) => ([k, func(k, v)])));
+
+      const setOfKeys = obj => new Set(Object.keys(obj));
+
+      // weights is a dictionary mapping id to weight
+      const weighted_jaccard = (a, b, weights) => {
+        const intersection = a.intersection(b);
+        const union = a.union(b);
+        
+        const intersection_total = Array.from(intersection).reduce((total, n) => total + weights[n], 0);
+        const union_total = Array.from(union).reduce((total, n) => total + weights[n], 0);
+        return intersection_total / union_total;
+      };
+
+      function is_related(a, b) {
+        return overlaps(geojson_hash(a), geojson_hash(b));
+      }
+
+      function score_similarity(a, b) {
+        if (a.hashes === null || b.hashes === null) return;
+
+        const minscore = Math.min(a.cells.min, b.cells.min);
+        const maxscore = Math.max(a.cells.max, b.cells.max);
+        console.log("range:", [minscore.toLocaleString(), maxscore.toLocaleString()]);
+
+        const ahashes = new Set(a.hashes);
+        const bhashes = new Set(b.hashes);
+
+        const acells3 = a.cells['3'];
+        const bcells3 = b.cells['3'];
+
+        const acells5 = a.cells['5'];
+        const bcells5 = b.cells['5'];
+
+        const acells7 = a.cells['7'];
+        const bcells7 = b.cells['7'];        
+
+        const related = overlaps(ahashes, bhashes);
+
+        const genetic_distance = ahashes.symmetricDifference(bhashes).size;
+
+        // re-weighted should convert source area values to a range from 0 to 1
+        const reweights = {};
+        const denominator = minscore + maxscore;
+        console.log("denominator:", denominator.toLocaleString());
+        const all_sizes = Array.from(a.cells.sizes.union(b.cells.sizes));
+        console.log("all_sizes:", all_sizes);
+        all_sizes.forEach(sz => { 
+          // source size to score
+          reweights[sz] = (denominator - sz) / denominator;
+        });
+        console.log("reweights:", reweights);
+
+        const acells3_weighted = mapValues(acells3, (k, v) => reweights[v]);
+        const bcells3_weighted = mapValues(bcells3, (k, v) => reweights[v]);
+        const acells5_weighted = mapValues(acells5, (k, v) => {
+          if (!(v in reweights)) throw Error(v + "not in reweights");
+          return reweights[v];
+        });
+        const bcells5_weighted = mapValues(bcells5, (k, v) => reweights[v]);
+        const acells7_weighted = mapValues(acells7, (k, v) => reweights[v]);
+        const bcells7_weighted = mapValues(bcells7, (k, v) => reweights[v]);
+
+        console.log({acells3_weighted, bcells3_weighted, acells5_weighted, bcells5_weighted})
+
+        const weights = {
+          3: mergeWith(acells3_weighted, bcells3_weighted, Math.max),
+          5: mergeWith(acells5_weighted, bcells5_weighted, Math.max),
+          7: mergeWith(acells7_weighted, bcells7_weighted, Math.max),
+        };
+        console.log("weights:", weights);
+
+        const simpleweights = {
+          3: mergeWith(a.cells['simple3'], b.cells['simple3'], Math.max),
+          5: mergeWith(a.cells['simple5'], b.cells['simple5'], Math.max),
+          7: mergeWith(a.cells['simple7'], b.cells['simple7'], Math.max),
+        };
+
+        const aset3 = setOfKeys(acells3);
+        const bset3 = setOfKeys(bcells3);
+        const aset5 = setOfKeys(acells5);
+        const bset5 = setOfKeys(bcells5);
+        const aset7 = setOfKeys(acells7);
+        const bset7 = setOfKeys(bcells7);
+
+        console.log("scoring", a, b);
+
+        // sum of overlapping cells (percentage-based) weight
+        const scores = {};
+        ['7', '5', '3', '0'].forEach(res => {
+          const aflatdata = a.flatdata.filter(it => it.res == res);
+          const bflatdata = b.flatdata.filter(it => it.res == res);
+          const acells = aflatdata.map(it => it.cell_id);
+          const bcells = bflatdata.map(it => it.cell_id);
+          const za = new Set(acells);
+          const zb = new Set(bcells);
+          const zi = za.intersection(zb);
+          const zasum = sum(aflatdata.filter(it => zi.has(it.cell_id)).map(it => it.cell_weight_as_percentage));
+          const zbsum = sum(bflatdata.filter(it => zi.has(it.cell_id)).map(it => it.cell_weight_as_percentage));        
+          const zscore = 0.5 * zasum + 0.5 * zbsum;
+          scores[res] = zscore;
+        });
+        
+        const results = [
+          ["related", related],
+          ["edit", genetic_distance], // genetic distance, like levenshtein distance
+
+          ["jwp3", scores['3']],
+          ["jaccard index (level 3)", Number(jaccard(aset3, bset3).toFixed(4))],
+          ["simple_weighted_jaccard_level_3",  Number(weighted_jaccard(aset3, bset3, simpleweights['3']).toFixed(2))],
+          ["relative weighted jaccard index (level 3)",  Number(weighted_jaccard(aset3, bset3, weights['3']).toFixed(2))],          
+
+          ["jwp5", scores['5']],
+          ["jaccard index (level 5)", Number(jaccard(aset5, bset5).toFixed(2))],
+          ["simple_weighted_jaccard_level_5", Number(weighted_jaccard(aset5, bset5, simpleweights['5']).toFixed(2))],
+          ["relative weighted jaccard index (level 5)",  Number(weighted_jaccard(aset5, bset5, weights['5']).toFixed(2))],          
+          
+          ["jwp7", scores['7']],
+          ["jaccard index (level 7)", Number(jaccard(aset7, bset7).toFixed(2))],
+          ["simple_weighted_jaccard_level_7", Number(weighted_jaccard(aset7, bset7, simpleweights['7']).toFixed(2))],
+          ["relative weighted jaccard index (level 7)",  Number(weighted_jaccard(aset7, bset7, weights['7']).toFixed(2))],          
+        ];
+
+        return Object.fromEntries(results);
+
+        // document.getElementById("results").innerText = results.map(([k, v]) => `${k}:\n${v}\n\n`).join("\n");
+
+        // document.getElementById("overlay").style.display = "none";
+      }
+    </script>
+    <script>
+      const map = L.map('map').setView([51.505, -0.09], 13);
+      app.refs.map = map;
+
+      var basemaps = {
+        OpenStreetMap: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map),
+        'OpenTopoMap': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+          maxZoom: 17,
+          attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+        }),
+        'Stadia Stamen Toner': L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.{ext}', {
+          minZoom: 0,
+          maxZoom: 20,
+          attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://www.stamen.com/" target="_blank">Stamen Design</a> &copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          ext: 'png'
+        }),
+        'CartoDB Dark Matter':  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: 'abcd',
+          maxZoom: 20
+        })
+      };
+
+      L.control.layers(basemaps, {}).addTo(map);
+
+
+      app.refs.featureGroup = L.featureGroup([]).addTo(map);
+
+      function toggle_hexagons(id, level) {
+        const file = app.state.files.find(file => file.id == id);
+        if (app.state.displaying.hexagons[level].includes(file.id)) {
+          app.refs.featureGroup.removeLayer(file.cellLayers[level]);
+          app.state.displaying.hexagons[level] = app.state.displaying.hexagons[level].filter(id => id !== file.id);
+        } else {
+          app.refs.featureGroup.addLayer(file.cellLayers[level]);
+          app.state.displaying.hexagons[level].push(file.id)
+        }
+        const bounds = app.refs.featureGroup.getBounds();
+        if (Object.keys(bounds).length >= 1) {
+          map.fitBounds(bounds);
+        }        
+        app.funcs.render_tbody();
+      }
+
+      function toggle_layer(id) {
+        const file = app.state.files.find(file => file.id == id);
+        if (app.state.displaying.geojson.includes(file.id)) {
+          app.refs.featureGroup.removeLayer(file.geojsonLayer);
+          app.state.displaying.geojson = app.state.displaying.geojson.filter(id => id !== file.id);
+        } else {
+          app.refs.featureGroup.addLayer(file.geojsonLayer);
+          app.state.displaying.geojson.push(file.id)
+        }
+        const bounds = app.refs.featureGroup.getBounds();
+        if (Object.keys(bounds).length >= 1) {
+          map.fitBounds(bounds);
+        }
+        app.funcs.render_tbody();
+      }
+    </script>
+  </body>
+</html>
