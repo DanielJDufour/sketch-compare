@@ -114,7 +114,7 @@
               <td class="trash"><button>${app.assets.svg.trash}</button></td>
               <td>${file.name}</td>
               <td class="view" onclick="toggle_layer(${file.id})"><button style="${app.state.displaying.geojson.includes(file.id) ? `background-color: ${file.color}` : ""}">${app.assets.svg.nodes}</button></td>
-              <td>${file.scores.related ? (file.scores.edit === 0 ? "=" : file.scores.edit) : "∅"}</td>
+              <td>${file.scores.genetic}</td>
               <td id="similarity-score-3" onclick="toggle_hexagons('${file.id}', 3)"><button style="${app.state.displaying.hexagons["3"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp3)}</button></td>
               <td id="similarity-score-5" onclick="toggle_hexagons('${file.id}', 5)"><button style="${app.state.displaying.hexagons["5"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp5)}</button></td>
               <td id="similarity-score-7" onclick="toggle_hexagons('${file.id}', 7)"><button style="${app.state.displaying.hexagons["7"].includes(file.id) ? `background-color: ${file.color}` : ""}">${display_number(file.scores.jwp7)}</button></td>
@@ -547,6 +547,17 @@
         return overlaps(geojson_hash(a), geojson_hash(b));
       }
 
+      function score_genetic_difference(a, b) {
+        a = Array.from(a);
+        b = Array.from(b);
+        const alen = a.length;
+        const blen = b.length;
+        const intersection_size = new Set(a).intersection(new Set(b)).size;
+        const ascore = 0.5 * (1 / alen) * intersection_size
+        const bscore = 0.5 * (1 / blen) * intersection_size;
+        return ascore + bscore;
+      }
+
       function score_similarity(a, b) {
         if (a.hashes === null || b.hashes === null) return;
 
@@ -569,6 +580,7 @@
         const related = overlaps(ahashes, bhashes);
 
         const genetic_distance = ahashes.symmetricDifference(bhashes).size;
+        const fast_genetic_difference = score_genetic_difference(ahashes, bhashes);
 
         // re-weighted should convert source area values to a range from 0 to 1
         const reweights = {};
@@ -635,6 +647,7 @@
         const results = [
           ["related", related],
           ["edit", genetic_distance], // genetic distance, like levenshtein distance
+          ["genetic", fast_genetic_difference],
 
           ["jwp3", scores['3']],
           ["jaccard index (level 3)", Number(jaccard(aset3, bset3).toFixed(4))],
